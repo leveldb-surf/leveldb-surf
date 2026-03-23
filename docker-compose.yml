@@ -1,0 +1,12 @@
+version: "3.9"
+
+services:
+  leveldb-surf:
+    build: .
+    container_name: leveldb-surf
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./project:/workspace/project
+      - ./benchmarks:/workspace/benchmarks
+    working_dir: /workspace

@@ -1,0 +1,51 @@
+# ── Compiled binaries and build artifacts ──────────────────
+# Never commit compiled files. They are OS-specific and huge.
+# Your teammates compile their own from your source.
+*.o
+*.a
+*.so
+*.out
+build/
+
+# ── LevelDB database files ────────────────────────────────────
+# These are created when you run db_bench or tests.
+# Can be gigabytes. Never commit.
+*.ldb
+MANIFEST-*
+CURRENT
+LOCK
+
+# ── Benchmark databases ───────────────────────────────────────
+# The actual key-value store files created during benchmarking.
+# Can be 1GB or 10GB. Never commit.
+benchmarks/baseline/testdb/
+benchmarks/testdb/
+/tmp/leveldbtest*/
+
+# ── Log files ─────────────────────────────────────────────────
+# LevelDB writes WAL logs during operation.
+# Only ignore .log files in db directories, not our script logs.
+benchmarks/baseline/*.log
+
+# ── Windows OS files ──────────────────────────────────────────
+Thumbs.db
+desktop.ini
+ehthumbs.db
+$RECYCLE.BIN/
+
+# ── Mac OS files (for teammates on Mac) ───────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ── VS Code workspace files ───────────────────────────────────
+# We DO commit .vscode/settings.json (project-wide settings)
+# We do NOT commit personal workspace files
+*.code-workspace
+.vscode/launch.json
+.vscode/tasks.json
+
+# ── Python cache (YCSB uses Python) ───────────────────────────
+__pycache__/
+*.pyc
+*.pyo
