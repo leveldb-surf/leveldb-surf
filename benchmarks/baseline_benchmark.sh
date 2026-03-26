@@ -15,9 +15,10 @@ echo "  Baseline Benchmark - Unmodified LevelDB"
 echo "  Results -> $RESULTS/"
 echo "============================================"
 
-# 1 million keys, 16-byte keys, 100-byte values
-# Matches your project proposal spec exactly
-COMMON="--num=1000000 --key_size=16 --value_size=100"
+# 1 million keys, 100-byte values
+# --key_size is not supported in this version of db_bench
+# key size defaults to 16 bytes internally
+COMMON="--num=1000000 --value_size=100"
 
 echo ""
 echo "Test 1: Sequential read..."
@@ -39,8 +40,11 @@ echo ""
 echo "============================================"
 echo "  Baseline complete."
 echo ""
-echo "Your key baseline number (seekrandom):"
-grep "seekrandom" "$RESULTS/seekrandom.txt" | tail -1
+echo "Your key baseline numbers:"
+echo -n "  seekrandom : " && grep "seekrandom" "$RESULTS/seekrandom.txt" | tail -1
+echo -n "  readrandom : " && grep "readrandom" "$RESULTS/readrandom.txt" | tail -1
+echo -n "  readseq    : " && grep "readseq"    "$RESULTS/readseq.txt"    | tail -1
+echo -n "  fillrandom : " && grep "fillrandom" "$RESULTS/fillrandom.txt" | tail -1
 echo ""
-echo "Save this. Compare after adding SuRF."
+echo "Save these. Compare after adding SuRF."
 echo "============================================"
