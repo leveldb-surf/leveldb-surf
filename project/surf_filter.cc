@@ -1,4 +1,4 @@
-// util/surf_filter.cc 
+// util/surf_filter.cc
 // Week 2: SuRF-based filter policy that replaces the Bloom filter
 
 #include "leveldb/filter_policy.h"
@@ -13,7 +13,7 @@ namespace leveldb {
         class SuRFPolicy : public FilterPolicy {
             public:
             ~SuRFPolicy() override = default;
-            
+
             // ----------------------------------
             // Name()
             // Stored inside the metaindex block of every SSTable
@@ -45,6 +45,8 @@ namespace leveldb {
                 // TODO: serialize surf into dst
                 // (check surf.hpp for the serialize API)
                 auto key_bytes = leveldb_surf.serialize();
+                // char* key_bytes = lelveldb_surf.serialize(); // explicit mention of char* to clarify that serialize returns a pointer to bytes
+                // unit64_tkey_len = leveldb_surf.serializedSize(); // get the length of the serialized bytes
                 auto key_len = leveldb_surf.serializedSize();
                 dst->append(key_bytes, key_len);
                 delete[] key_bytes; // prevent memory leaks
@@ -60,12 +62,17 @@ namespace leveldb {
             bool KeyMayMatch(const Slice& key, const Slice& filter) const override {
                 if (filter.empty()) return true; // safe fallback
 
-                // TODO: deserialize SuRF from filter bytes
+                // deserialize SuRF from filter bytes
                 // surf::SuRF surf = surf::SuRF::deSerialize(...);
+                char* src = const_cast<char*>(filter.data());
+                surf::SuRF* surf = surf::SuRF::deSerialize(src);
+                bool result = surf->lookupKey(key.ToString());
+                surf->destroy(); // free any memory allocated by the SuRF object (if applicable)
+                delete surf; // prevent memory leaks
+                return result; // return the result of the lookup
 
-                //TODO: return surf lookup key
 
-                return true; // placeholder - remove when implemented
+
             }
 
 
@@ -78,12 +85,21 @@ namespace leveldb {
             bool RangeMayMatch(const Slice& lo, const Slice& hi, const Slice& filter) const override {
                 if (filter.empty()) return true; // safe fallback
 
-                // TODO: deserialize SuRF from filter bytes
+                // deserialize SuRF from filter bytes
                 // surf::SuRF surf = surf::SuRF::deSerialize(...);
+                char* src = const_cast<char*>(filter.data());
+                surf::SuRF* surf_obj = surf::SuRF::deSerialize(src);
+                bool result = surf_obj->lookupRange(lo.ToString(),true, hi.ToString(),true);
+                //return surf lookup range, lo and hi inclusive
 
-                //TODO: return surf lookup range, lo and hi inclusive
+                surf_obj->destroy(); // free any memory allocated by the SuRF object (if applicable)
+                delete surf_obj; // prevent memory leaks
+                return result; // return the result of the range lookup
 
-                return true; // placeholder - remove when implemented
+
+
+
+
             }
         };
     } // namespace
