@@ -40,9 +40,14 @@ namespace leveldb {
                 }
 
                 // TODO: construct SuRF from key_strs
+                surf::SuRF leveldb_surf(key_strs);
 
                 // TODO: serialize surf into dst
                 // (check surf.hpp for the serialize API)
+                auto key_bytes = leveldb_surf.serialize();
+                auto key_len = leveldb_surf.serializedSize();
+                dst->append(key_bytes, key_len);
+                delete[] key_bytes; // prevent memory leaks
             }
 
 
