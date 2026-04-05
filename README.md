@@ -11,7 +11,7 @@ LevelDB is a key-value store built on a Log-Structured Merge Tree (LSM-tree). It
 
 This means when you run a range scan, LevelDB opens every SSTable whose key-range overlaps your query — even if that file contains zero keys in your range. That is wasted I/O.
 
-**We fix this by replacing the Bloom filter with SuRF (Succinct Range Filter)** — a data structure that can answer range queries. When SuRF says no key exists in a range, LevelDB skips that SSTable entirely. The SIGMOD 2018 Best Paper showed up to 5x improvement in range query performance in RocksDB using SuRF.
+**We fix this by replacing the Bloom filter with SuRF (Succinct Range Filter)** — a data structure that can answer range queries. When SuRF says no key exists in a range, LevelDB skips reading that SSTable's data blocks entirely. The SIGMOD 2018 Best Paper showed up to 5x improvement in range query performance in RocksDB using SuRF.
 
 ---
 
@@ -54,7 +54,7 @@ leveldb-surf/
     ├── rebuild.sh                # Compile and test after every code change
     ├── baseline_benchmark.sh     # Capture before-SuRF performance numbers
     └── baseline/                 # Baseline results (captured Week 1 Part C)
-        ├── seekrandom.txt        # 4.317 micros/op — KEY BEFORE NUMBER
+        ├── seekrandom.txt        # 4.317 micros/op
         ├── readrandom.txt        # 3.691 micros/op
         ├── readseq.txt           # 0.213 micros/op
         └── fillrandom.txt        # 3.953 micros/op
@@ -195,111 +195,91 @@ The abstract interface every filter must implement. Defines 3 methods:
 - `RangeMayMatch(lo, hi, filter)` — returns false = no key in [lo,hi], true = maybe has keys
 - Default `return true` so existing Bloom filter works unchanged
 
-Currently `RangeMayMatch` had **0 grep results** across the entire codebase. We added it in Week 2.
+`RangeMayMatch` had **0 grep results** across the entire codebase before Week 2.
 
-### `util/bloom.cc` — The Existing Filter (We Replace This)
+### `util/bloom.cc` — The Existing Filter
 Implements Bloom filter using a bit array and double-hashing.
-- `CreateFilter`: hashes each key k times (k = bits_per_key × 0.69), sets those bits ON
+- `CreateFilter`: hashes each key k times, sets those bits ON
 - `KeyMayMatch`: hashes query key same way, checks if all k bits are ON
-- **Critical flaw for ranges**: `BloomHash()` destroys all key ordering. "ant" and "zebra" become unrelated numbers. Cannot answer "any key between bear and fox?"
+- **Cannot answer range queries**: hashing destroys all key ordering
 
 ### `util/surf_filter.cc` — Our SuRF Implementation (Week 2 — DONE)
 New file implementing SuRFPolicy:
 - `Name()` — returns `"leveldb.SuRFFilter"`. Never change this string.
 - `CreateFilter()` — builds SuRF trie from sorted keys, serializes to bytes, appends to dst
 - `KeyMayMatch()` — deserializes SuRF, calls `lookupKey()`. Returns false = definitely absent.
-- `RangeMayMatch()` — deserializes SuRF, calls `lookupRange(lo, true, hi, true)`. The new method.
+- `RangeMayMatch()` — deserializes SuRF, calls `lookupRange(lo, true, hi, true)`.
 
-See `project/notes/week2_notes.md` for full implementation details and design decisions.
+See `project/notes/week2_notes.md` for full implementation details.
 
 ### `table/filter_block.h` + `filter_block.cc` — The 2KB Problem
 `FilterBlockBuilder` builds the filter during compaction. `FilterBlockReader` reads it during lookups.
 
-**The 2KB behavior (kept as original):**
-```
-kFilterBaseLg = 11 → kFilterBase = 2^11 = 2048 bytes = 2KB
-GenerateFilter() is called every 2KB of data → many mini-filters per SSTable
-```
+`kFilterBaseLg = 11` means `GenerateFilter()` is called every 2KB — many mini-filters per SSTable.
 
-**Why filter_block.cc was NOT changed in Week 2:**
-The `FilterBlockTest.MultiChunk` test requires per-block filter isolation —
-`KeyMayMatch(0, "hello")` must return false when "hello" was only added at offset 3100.
-Buffering all keys into one filter would break this test.
-`RangeMayMatch` operates at the SSTable level in `table_cache.cc` before the SSTable
-is opened, so per-block filters do not affect range scan pruning.
+**Why filter_block.cc was NOT changed:**
+The `FilterBlockTest.MultiChunk` test requires per-block filter isolation.
+Changing the writer without changing the reader and updating the tests would break existing behavior.
+`RangeMayMatch` operates at the SSTable level in `table_cache.cc` so this does not block the project.
 See `project/notes/week2_notes.md` for full explanation.
 
-### `table/table_builder.cc` — Write Path (4 Lines That Matter)
-Builds one complete SSTable from scratch. Only 4 lines touch the filter:
-1. Constructor: `new FilterBlockBuilder(opt.filter_policy)` — plug-in point
-2. `Add()`: `filter_block->AddKey(key)` — key given to filter before data block flush
-3. `Flush()`: `filter_block->StartBlock(offset)` — triggers GenerateFilter() at 2KB
-4. `Finish()`: `filter_block->Finish()` + stores `filter_policy->Name()` in metaindex
+### `table/table_builder.cc` — Write Path
+Builds one complete SSTable. Only 4 lines touch the filter. We do not change this file.
 
-**We do not change this file.**
+### `table/table.cc` — Read Path
+- `Table::Open()`: reads footer → index → filter block into memory
+- `InternalGet()` line 225: `filter->KeyMayMatch()` — point queries already optimized
+- `NewIterator()`: creates TwoLevelIterator — no range filter check yet ← gap filled in Week 3
 
-### `table/table.cc` — Read Path (The Gap We Fill)
-Librarian who opens and reads an SSTable.
-- `Table::Open()`: reads footer → index → filter into memory
-- `ReadMeta()`: looks for `"filter." + policy->Name()`. Name mismatch = filter silently ignored
-- `InternalGet()` line 225: `filter->KeyMayMatch()` — **point queries already optimized**
-- `NewIterator()`: creates TwoLevelIterator — **NO filter check for range scans** ← gap we fill in Week 3
+### `db/version_set.cc` — SSTable Directory
+Tracks all SSTables across all 7 levels.
+- `FileMetaData`: every SSTable has `smallest` and `largest` key — the coarse range filter
+- `AddIterators()`: starting point for range scan iterators — our threading starts here
 
-### `db/version_set.cc` — The Library Directory
-Tracks all SSTables across all 7 levels (Level 0–6).
-- `FileMetaData`: every SSTable has `smallest` and `largest` key — the coarse filter
-- `AddIterators()`: creates iterators for all candidate SSTables — **our hook location**
-- `LevelFileNumIterator`: walks through SSTable file list (outer iterator)
-- `GetFileIterator()`: opens one SSTable (currently unconditional — no filter check)
+### `db/table_cache.cc` — Our Hook Point (Week 3)
+LRU cache of open SSTable files.
+- `FindTable()`: checks LRU cache, opens `.ldb` file if not cached, loads filter into memory
+- `NewIterator()` — **our hook point for RangeMayMatch**
 
-**Two-level filtering:**
-- Coarse (already exists): skip if file range [smallest, largest] doesn't overlap query
-- Fine (we add in Week 3): `RangeMayMatch(lo, hi)` — skip if no actual key in [lo, hi]
+**Important architectural constraint:**
+`RangeMayMatch` requires the filter bytes (the serialized SuRF trie). These bytes live inside the `.ldb` SSTable file in the filter block. To read them, the file must be opened. Opening the file is `FindTable()`. Therefore `RangeMayMatch` **cannot** run before `FindTable()` — this would require the filter to exist outside the SSTable, which is a full storage redesign (RocksDB's partitioned filter architecture, 2017).
 
-### `db/table_cache.cc` — The SSTable Cache (Our Hook Point)
-LRU cache of open SSTable files. Opening from disk is slow; cache makes repeat access fast.
-- `FindTable()`: cache hit = fast (memory), cache miss = `Table::Open()` (disk I/O)
-- `NewIterator()` — **OUR EXACT HOOK POINT (Week 3)**:
-  ```
-  BEFORE FindTable() is called:
-  if RangeMayMatch(lo, hi) == false → return empty iterator (zero disk I/O)
-  ```
-
-**The threading problem (Challenge 2):**
-The query range `[lo, hi]` must be threaded through:
+**Correct hook location — AFTER FindTable(), BEFORE data block reads:**
 ```
-AddIterators(lo, hi)
-  → NewConcatenatingIterator(lo, hi)
-    → GetFileIterator(lo, hi)
-      → TableCache::NewIterator(lo, hi)
-        → RangeMayMatch check BEFORE FindTable()
+FindTable()                    ← opens SSTable, loads filter block into memory
+filter now in RAM              ← filter bytes available for RangeMayMatch
+RangeMayMatch(lo, hi, filter)  ← check range against in-memory filter
+false → return empty iterator  ← skip data block reads (the expensive part)
+true  → table->NewIterator()   ← proceed to read data blocks
 ```
-This requires changing function signatures across multiple files — the main engineering challenge of the project.
+
+**When is this beneficial:**
+- SSTable warm in LRU cache: `FindTable()` is a cache hit (nearly free). `RangeMayMatch` then prevents all data block reads. Maximum benefit.
+- SSTable cold (not cached): `FindTable()` reads the filter block from disk anyway as part of `Table::Open()`. `RangeMayMatch` still prevents the more expensive data block reads. Reduced but real benefit.
+
+**Why not before FindTable (pre-open check):**
+This would require storing filter data in a separate cache tier independent of the SSTable file. RocksDB implemented this as "partitioned filters" in 2017. It is a significant storage layout redesign outside the scope of this project. This is a known limitation and a natural future extension.
 
 ### `InternalFilterPolicy` — The Hidden Wrapper
-Defined in `db/dbformat.cc`. Wraps your filter and strips internal key bytes before calling it.
-
-LevelDB stores keys internally as: `"cat" + [7-byte sequence number] + [1-byte type]`
-
-`InternalFilterPolicy` strips the extra 8 bytes. **Your SuRFPolicy always receives clean user keys.** You never handle internal key format. This applies to `CreateFilter`, `KeyMayMatch`, and `RangeMayMatch`.
+Defined in `db/dbformat.cc`. Strips internal key bytes (sequence number + type) before calling your filter. Your `SuRFPolicy` always receives clean user keys. You never handle internal key format.
 
 ---
 
-## Project Architecture — What We Are Building
+## Project Architecture
 
-### The Problem in Detail
+### The Problem
 
 When a range query `[lo, hi]` runs:
-1. **Coarse check** (already exists): skip SSTables whose `[smallest, largest]` doesn't overlap `[lo, hi]`
-2. **Fine check** (missing): for SSTables that pass the coarse check, are there *actual* keys in `[lo, hi]`?
+1. **Coarse check** (already exists): skip SSTables whose `[smallest, largest]` does not overlap `[lo, hi]`
+2. **Fine check** (we add): for SSTables that pass the coarse check, does any actual key exist in `[lo, hi]`?
 
 Example:
 ```
 SSTable B: smallest=bear, largest=hippo → passes coarse check
-Actual keys in SSTable B: bear, cat, elephant (none between dog and fox)
+Actual keys: bear, cat, elephant   (none between dog and fox)
 Query: [dog, fox]
-Without SuRF: LevelDB opens SSTable B, scans, finds nothing. Wasted I/O.
-With SuRF:    RangeMayMatch("dog","fox") → false → skip SSTable B entirely
+Without SuRF: LevelDB opens SSTable B, reads data blocks, finds nothing. Wasted I/O.
+With SuRF:    RangeMayMatch("dog","fox") → false → skip data block reads
 ```
 
 ### The Solution — SuRF
@@ -310,11 +290,11 @@ SuRF builds a compressed trie from all keys. To answer "any key in [elk, hippo]?
 
 | File | Change | Week | Status |
 |---|---|---|---|
-| `include/leveldb/filter_policy.h` | Add `RangeMayMatch()` with default `return true`, declare `NewSuRFFilterPolicy` | 2 | DONE |
+| `include/leveldb/filter_policy.h` | Add `RangeMayMatch()` default `return true`, declare `NewSuRFFilterPolicy` | 2 | DONE |
 | `util/surf_filter.cc` | New file: SuRFPolicy implementing all 4 methods | 2 | DONE |
-| `table/filter_block.cc` | NOT changed — see week2_notes.md for explanation | 2 | SKIPPED |
-| `db/table_cache.cc` | Check `RangeMayMatch` before `FindTable()` in `NewIterator()` | 3 | TODO |
-| `db/version_set.cc` | Thread `[lo, hi]` from `AddIterators()` down | 3 | TODO |
+| `table/filter_block.cc` | NOT changed — see week2_notes.md | 2 | SKIPPED |
+| `db/table_cache.cc` | Add `RangeMayMatch` check after `FindTable()`, before `NewIterator()` | 3 | TODO |
+| `db/version_set.cc` | Thread `[lo, hi]` from `AddIterators()` down to `GetFileIterator()` | 3 | TODO |
 | `table/two_level_iterator.cc` | Pass range bounds to inner iterator | 3 | TODO |
 | `benchmarks/db_bench.cc` | Change to `NewSuRFFilterPolicy()` at line 523 | 4 | TODO |
 
@@ -329,10 +309,13 @@ DB::NewIterator()
                     outer: LevelFileNumIterator (walks file list)
                     inner: GetFileIterator()
                              └── TableCache::NewIterator()   [table_cache.cc]
-                                   ← RangeMayMatch(lo,hi) CHECK HERE (Week 3)
-                                   false → return empty iterator
-                                   true  → FindTable() → open SSTable
-                                             └── Table::NewIterator()  [table.cc]
+                                   FindTable()
+                                     ← SSTable opened, filter loaded into RAM
+                                   RangeMayMatch(lo, hi) CHECK HERE
+                                     false → return empty iterator
+                                             (data block reads skipped)
+                                     true  → table->NewIterator()
+                                               └── scan data blocks
 ```
 
 ### The Write Path — Filter Build During Compaction
@@ -342,27 +325,31 @@ DoCompactionWork()
   └── BuildTable()
         └── TableBuilder::Add(key, value)      [table_builder.cc]
               └── FilterBlockBuilder::AddKey()  [filter_block.cc]
-                    buffers key (per-2KB chunks, original behavior kept)
-              when SSTable done:
+                    buffers key (per-2KB chunks, original behavior)
               └── TableBuilder::Finish()
                     └── FilterBlockBuilder::Finish()
-                          └── SuRFPolicy::CreateFilter(keys)  [surf_filter.cc]
-                                builds SuRF trie → serializes → appends to result_
+                          └── SuRFPolicy::CreateFilter(keys) [surf_filter.cc]
+                                builds SuRF trie → serializes → writes to SSTable
 ```
 
 ### The Safety Rule
 
 ```
 KeyMayMatch / RangeMayMatch:
-  false → MUST be correct. Definitely absent. Never lie here.
+  false → MUST be correct. Definitely no key. Never lie here.
   true  → CAN be wrong. False positives are acceptable (just slower).
 
 False negative = data loss = catastrophic = never acceptable
-False positive = extra disk read = acceptable
+False positive = extra data block read = acceptable
 
 Filters are PERFORMANCE ONLY — not correctness.
-Remove the filter entirely: LevelDB still works, just slower.
 ```
+
+### Architectural Limitation and Future Extension
+
+Our `RangeMayMatch` check runs after `FindTable()` loads the filter into memory. For warm (cached) SSTables this is essentially free and the data block reads are fully avoided. For cold SSTables, the filter block is read from disk as part of opening the file, which is unavoidable in LevelDB's architecture.
+
+A pre-open range check — verifying no keys exist in `[lo, hi]` before opening the SSTable file at all — would require storing filter data in a separate partition outside the SSTable, in its own cache tier. RocksDB implemented this as partitioned filters in 2017. This represents a natural extension beyond this project's scope.
 
 ---
 
@@ -382,20 +369,19 @@ Captured: March 26, 2026 — 1 million keys, 16-byte keys, 100-byte values.
 ```
 
 **Key insight:** `seekrandom (4.317) > readrandom (3.691)` by 0.626 µs/op.
-That gap = wasted SSTable opens during forward scan after seek.
-SuRF's `RangeMayMatch()` eliminates those wasted opens.
+That gap = wasted data block reads during range scans.
+SuRF's `RangeMayMatch()` eliminates those wasted reads.
 
 ---
 
-## Project Timeline — Detailed
+## Project Timeline
 
 ### Week 1 — Study and Baseline COMPLETE
-- Read all 8 source files — notes in `project/notes/source_reading_notes.md`
-- Captured baseline benchmarks — results in `benchmarks/baseline/`
-- Hands-on demos D1-D12 — all in `project/demos/` with notes in `project/notes/demos/`
+- All 8 source files read — notes in `project/notes/source_reading_notes.md`
+- Baseline benchmarks captured — results in `benchmarks/baseline/`
+- Hands-on demos D1-D12 — all in `project/demos/` with notes
 
 ### Week 2 — Implement SuRFPolicy COMPLETE
-Files changed:
 ```
 NEW:    project/surf_filter.cc
           SuRFPolicy::Name()           → "leveldb.SuRFFilter"
@@ -414,18 +400,19 @@ NOT CHANGED: filter_block.cc
 Test result: 210/210 tests pass. 1 skipped (zstd — expected).
 
 ### Week 3 — Wire Into Range Scan Path TODO
-Files to modify:
 ```
 MODIFY: db/table_cache.cc
-          add RangeMayMatch check before FindTable() in NewIterator()
+          In NewIterator(): after FindTable() loads filter into memory,
+          call RangeMayMatch(lo, hi, filter).
+          If false → return empty iterator (skip data block reads).
+          If true  → proceed to table->NewIterator() as normal.
 
 MODIFY: db/version_set.cc
-          thread [lo, hi] from AddIterators() → GetFileIterator()
+          Thread [lo, hi] from AddIterators() → GetFileIterator()
 
 MODIFY: table/two_level_iterator.cc
-          pass range bounds to inner iterator creation
+          Pass range bounds to inner iterator creation
 ```
-Test: write range scan correctness tests. Run fuzz tests.
 
 ### Week 4 — Benchmarking TODO
 ```
@@ -434,7 +421,7 @@ MODIFY: benchmarks/db_bench.cc line 523
           to:     NewSuRFFilterPolicy()
 
 RUN: seekrandom, YCSB Workload E at 1M and 10M keys
-COLLECT: latency, SSTables skipped, disk I/O, false positive rate
+COLLECT: latency, data block reads skipped, false positive rate
 ```
 
 ### Week 5 — Analysis and Report TODO
@@ -444,31 +431,33 @@ COLLECT: latency, SSTables skipped, disk I/O, false positive rate
 
 ## Key Concepts Glossary
 
-**LSM-tree** — Log-Structured Merge Tree. Writes go to memory first, then flush to sorted immutable files (SSTables) on disk.
+**LSM-tree** — Log-Structured Merge Tree. Writes go to memory first, then flush to sorted immutable files on disk.
 
 **SSTable** — Sorted String Table. Immutable file on disk. Contains data blocks, index block, and filter block.
 
-**Bloom filter** — Bit array + hash functions. Answers "is key X possibly here?" Cannot answer range queries because hashing destroys key ordering.
+**Bloom filter** — Bit array + hash functions. Answers point queries only. Cannot answer range queries because hashing destroys key ordering.
 
-**SuRF** — Succinct Range Filter. Compressed trie (FST). Answers "does any key in [lo, hi] exist here?" using ~10 bits per key.
+**SuRF** — Succinct Range Filter. Compressed trie. Answers "does any key in [lo, hi] exist here?" using ~10 bits per key.
 
 **FST** — Fast Succinct Trie. The compressed bit-array form of a trie that SuRF uses internally.
 
-**Compaction** — Background process that merges and re-sorts SSTables. This is when `CreateFilter()` is called and filters are built.
+**Compaction** — Background process that merges SSTables. This is when `CreateFilter()` is called.
 
-**FilterPolicy** — LevelDB's plug-in interface. `Name()`, `CreateFilter()`, `KeyMayMatch()`, `RangeMayMatch()` (we added in Week 2).
+**FilterPolicy** — LevelDB's plug-in interface. `Name()`, `CreateFilter()`, `KeyMayMatch()`, `RangeMayMatch()` (added Week 2).
 
-**InternalFilterPolicy** — Hidden wrapper that strips internal key bytes (sequence number + type) before calling your filter. Your code always receives clean user keys.
+**InternalFilterPolicy** — Hidden wrapper that strips internal key bytes before calling your filter. Your code always receives clean user keys.
 
-**False positive** — Filter says "might have data" when it doesn't. Acceptable — just extra disk read.
+**False positive** — Filter says "might have data" when it does not. Acceptable — just reads data blocks unnecessarily.
 
 **False negative** — Filter says "definitely no data" when there is data. Catastrophic — silent data loss. Must never happen.
 
-**2KB problem** — FilterBlockBuilder calls `CreateFilter()` every 2KB of data. filter_block.cc kept as original to preserve test compatibility. RangeMayMatch works at SSTable level regardless.
+**2KB problem** — FilterBlockBuilder calls `CreateFilter()` every 2KB. filter_block.cc kept as original. `RangeMayMatch` works at SSTable level regardless.
 
-**Threading problem** — The query range `[lo, hi]` must be passed through 4 function call layers to reach the `RangeMayMatch()` check. Requires changing function signatures in multiple files.
+**Threading problem** — The query range `[lo, hi]` must be passed through multiple function call layers to reach `RangeMayMatch()` in `table_cache.cc`. Requires changing function signatures in `version_set.cc` and `two_level_iterator.cc`.
 
-**micros/op** — Microseconds per operation. 1 microsecond = 0.000001 seconds. Smaller = faster.
+**Partitioned filters** — RocksDB's 2017 architecture that stores filter data in a separate cache tier, enabling range checks before opening an SSTable file. Not implemented in LevelDB. Would allow pre-open `RangeMayMatch` checks, which our implementation cannot do.
+
+**micros/op** — Microseconds per operation. Smaller = faster.
 
 ---
 
