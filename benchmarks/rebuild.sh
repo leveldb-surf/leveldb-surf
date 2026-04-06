@@ -86,6 +86,12 @@ if [ -f /workspace/project/version_set.h ]; then
     cp /workspace/project/version_set.h /workspace/leveldb/db/version_set.h
     echo "  OK: version_set.h -> db/"
 fi
+
+if [ -f /workspace/project/db_bench.cc ]; then
+    cp /workspace/project/db_bench.cc /workspace/leveldb/benchmarks/db_bench.cc
+    echo "  OK: db_bench.cc -> benchmarks/"
+fi
+
 # STEP 2: Incremental rebuild
 # cmake only recompiles files that changed. Usually 10-30 seconds.
 

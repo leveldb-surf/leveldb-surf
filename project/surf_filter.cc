@@ -30,7 +30,7 @@ namespace leveldb {
             // keys[0..n-1] are sorted keys (InternalFilterPolicy has stripped the 8-byte internal suffix already)
             // Append the serialized SuRF bytes to *dst
             void CreateFilter(const Slice* keys, int n, std::string* dst) const override {
-                if (n == 0) return; // safe fallback so SuRF's constructor doesnt crash or produce meaningless trie
+                if (n < 50) return; // safe fallback so SuRF's constructor doesnt crash or produce meaningless trie
 
                 // TODO: convert keys to the format SuRF expects
                 std::vector<std::string> key_strs;
@@ -61,6 +61,7 @@ namespace leveldb {
             // safety: if deserialization fails, return true (safety fallback)
             bool KeyMayMatch(const Slice& key, const Slice& filter) const override {
                 if (filter.empty()) return true; // safe fallback
+                if (filter.size() < 64) return true;
 
                 // deserialize SuRF from filter bytes
                 // surf::SuRF surf = surf::SuRF::deSerialize(...);
@@ -81,6 +82,7 @@ namespace leveldb {
             // safety: if deserialization fails, return true (safety fallback)
             bool RangeMayMatch(const Slice& lo, const Slice& hi, const Slice& filter) const override {
                 if (filter.empty()) return true; // safe fallback
+                if (filter.size() < 64) return true;
 
                 // deserialize SuRF from filter bytes
                 // surf::SuRF surf = surf::SuRF::deSerialize(...);
