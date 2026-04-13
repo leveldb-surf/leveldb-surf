@@ -54,7 +54,7 @@ export function EventTable({ events, onSelectEvent }: EventTableProps) {
                     <td className="px-4 py-2">
                       <Badge text={event.query_type} className={getQueryTypeColor(event.query_type)} />
                     </td>
-                    <td className="px-4 py-2 font-mono)>{formatLatency(event.latency_us)}</td>
+                    <td className="px-4 py-2 font-mono">{formatLatency(event.latency_us)}</td>
                     <td className="px-4 py-2">
                       <Badge
                         text={event.actual_match ? 'Hit' : 'Miss'}
