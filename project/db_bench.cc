@@ -526,6 +526,8 @@ class Benchmark {
   CountComparator count_comparator_;
   int total_thread_count_;
   JsonlWriter* metrics_writer_;
+  port::Mutex metrics_mu_;
+  std::atomic<uint64_t> next_query_id_;
 
   void PrintHeader() {
     const int kKeySize = 16 + FLAGS_key_prefix;
@@ -625,7 +627,8 @@ class Benchmark {
         heap_counter_(0),
         count_comparator_(BytewiseComparator()),
         total_thread_count_(0),
-        metrics_writer_(nullptr) {
+        metrics_writer_(nullptr),
+        next_query_id_(0) {
     std::vector<std::string> files;
     g_env->GetChildren(FLAGS_db, &files);
     for (size_t i = 0; i < files.size(); i++) {
@@ -645,6 +648,43 @@ class Benchmark {
   }
 
   void SetMetricsWriter(JsonlWriter* writer) { metrics_writer_ = writer; }
+
+  void RecordQueryEvent(const char* benchmark_name, const char* query_type,
+                        const Slice* lo, const Slice* hi,
+                        bool actual_match, double latency_us,
+                        int64_t timestamp_us) {
+    if (metrics_writer_ == nullptr) {
+      return;
+    }
+
+    uint64_t query_id = next_query_id_.fetch_add(1, std::memory_order_relaxed);
+    std::string line = "{";
+    line += "\"query_id\":" + std::to_string(query_id);
+    line += ",\"benchmark_name\":\"" +
+            JsonlWriter::EscapeString(benchmark_name) + "\"";
+    line += ",\"filter_type\":\"" +
+            JsonlWriter::EscapeString(FLAGS_filter) + "\"";
+    line += ",\"query_type\":\"" +
+            JsonlWriter::EscapeString(query_type) + "\"";
+    line += ",\"latency_us\":" + std::to_string(latency_us);
+    line += ",\"timestamp_us\":" + std::to_string(timestamp_us);
+    if (lo != nullptr) {
+      line += ",\"query_lo\":\"" +
+              JsonlWriter::EscapeString(lo->ToString()) + "\"";
+    }
+    if (hi != nullptr) {
+      line += ",\"query_hi\":\"" +
+              JsonlWriter::EscapeString(hi->ToString()) + "\"";
+    }
+    line += ",\"actual_match\":" +
+            std::string(actual_match ? "true" : "false");
+    line += "}";
+
+    {
+      MutexLock l(&metrics_mu_);
+      metrics_writer_->WriteLine(line);
+    }
+  }
 
   void Run() {
     PrintHeader();
@@ -997,7 +1037,11 @@ class Benchmark {
     int i = 0;
     int64_t bytes = 0;
     for (iter->SeekToFirst(); i < reads_ && iter->Valid(); iter->Next()) {
+      int64_t start = g_env->NowMicros();
       bytes += iter->key().size() + iter->value().size();
+      int64_t end = g_env->NowMicros();
+      RecordQueryEvent("readseq", "sequential_scan", nullptr, nullptr, true,
+                       static_cast<double>(end - start), end);
       thread->stats.FinishedSingleOp();
       ++i;
     }
@@ -1010,7 +1054,11 @@ class Benchmark {
     int i = 0;
     int64_t bytes = 0;
     for (iter->SeekToLast(); i < reads_ && iter->Valid(); iter->Prev()) {
+      int64_t start = g_env->NowMicros();
       bytes += iter->key().size() + iter->value().size();
+      int64_t end = g_env->NowMicros();
+      RecordQueryEvent("readreverse", "reverse_scan", nullptr, nullptr, true,
+                       static_cast<double>(end - start), end);
       thread->stats.FinishedSingleOp();
       ++i;
     }
@@ -1026,9 +1074,14 @@ class Benchmark {
     for (int i = 0; i < reads_; i++) {
       const int k = thread->rand.Uniform(FLAGS_num);
       key.Set(k);
-      if (db_->Get(options, key.slice(), &value).ok()) {
+      int64_t start = g_env->NowMicros();
+      bool ok = db_->Get(options, key.slice(), &value).ok();
+      int64_t end = g_env->NowMicros();
+      if (ok) {
         found++;
       }
+      RecordQueryEvent("readrandom", "point_get", nullptr, nullptr, ok,
+                       static_cast<double>(end - start), end);
       thread->stats.FinishedSingleOp();
     }
     char msg[100];
@@ -1044,7 +1097,11 @@ class Benchmark {
       const int k = thread->rand.Uniform(FLAGS_num);
       key.Set(k);
       Slice s = Slice(key.slice().data(), key.slice().size() - 1);
-      db_->Get(options, s, &value);
+      int64_t start = g_env->NowMicros();
+      bool ok = db_->Get(options, s, &value).ok();
+      int64_t end = g_env->NowMicros();
+      RecordQueryEvent("readmissing", "point_get", nullptr, nullptr, ok,
+                       static_cast<double>(end - start), end);
       thread->stats.FinishedSingleOp();
     }
   }
@@ -1057,7 +1114,11 @@ class Benchmark {
     for (int i = 0; i < reads_; i++) {
       const int k = thread->rand.Uniform(range);
       key.Set(k);
-      db_->Get(options, key.slice(), &value);
+      int64_t start = g_env->NowMicros();
+      bool ok = db_->Get(options, key.slice(), &value).ok();
+      int64_t end = g_env->NowMicros();
+      RecordQueryEvent("readhot", "point_get", nullptr, nullptr, ok,
+                       static_cast<double>(end - start), end);
       thread->stats.FinishedSingleOp();
     }
   }
@@ -1067,11 +1128,16 @@ class Benchmark {
     int found = 0;
     KeyBuffer key;
     for (int i = 0; i < reads_; i++) {
+      int64_t start = g_env->NowMicros();
       Iterator* iter = db_->NewIterator(options);
       const int k = thread->rand.Uniform(FLAGS_num);
       key.Set(k);
       iter->Seek(key.slice());
-      if (iter->Valid() && iter->key() == key.slice()) found++;
+      bool ok = iter->Valid() && iter->key() == key.slice();
+      int64_t end = g_env->NowMicros();
+      if (ok) found++;
+      RecordQueryEvent("seekrandom", "point_seek", nullptr, nullptr, ok,
+                       static_cast<double>(end - start), end);
       delete iter;
       thread->stats.FinishedSingleOp();
     }
@@ -1089,8 +1155,13 @@ class Benchmark {
     for (int i = 0; i < reads_; i++) {
       k = (k + (thread->rand.Uniform(100))) % FLAGS_num;
       key.Set(k);
+      int64_t start = g_env->NowMicros();
       iter->Seek(key.slice());
-      if (iter->Valid() && iter->key() == key.slice()) found++;
+      bool ok = iter->Valid() && iter->key() == key.slice();
+      int64_t end = g_env->NowMicros();
+      if (ok) found++;
+      RecordQueryEvent("seekordered", "point_seek", nullptr, nullptr, ok,
+                       static_cast<double>(end - start), end);
       thread->stats.FinishedSingleOp();
     }
     delete iter;
@@ -1118,7 +1189,8 @@ class Benchmark {
   // Without lo/hi, RangeMayMatch is never called (this is why seekrandom
   // shows no SuRF advantage).
   // ====================================================================
-  void DoSuRFRangeScan(ThreadState* thread, int miss_pct, int range_width) {
+  void DoSuRFRangeScan(ThreadState* thread, const char* benchmark_name,
+                         int miss_pct, int range_width) {
     ReadOptions options;
     int found = 0;
     int total_scanned = 0;
@@ -1151,6 +1223,7 @@ class Benchmark {
       options.lo = lo_key.slice();
       options.hi = hi_key.slice();
 
+      int64_t start = g_env->NowMicros();
       Iterator* iter = db_->NewIterator(options);
       iter->Seek(lo_key.slice());
 
@@ -1162,8 +1235,12 @@ class Benchmark {
         scanned++;
         iter->Next();
       }
+      int64_t end = g_env->NowMicros();
       total_scanned += scanned;
       delete iter;
+      RecordQueryEvent(benchmark_name, "range_scan", &lo_key.slice(),
+                       &hi_key.slice(), scanned > 0,
+                       static_cast<double>(end - start), end);
       thread->stats.FinishedSingleOp();
     }
 
@@ -1177,37 +1254,43 @@ class Benchmark {
   // SuRF: 100% miss rate — all queries above inserted key range
   // This is the best case for SuRF: every SSTable can potentially be skipped
   void SuRFRangeScan100(ThreadState* thread) {
-    DoSuRFRangeScan(thread, /*miss_pct=*/100, /*range_width=*/10);
+    DoSuRFRangeScan(thread, "surfscan100", /*miss_pct=*/100,
+                    /*range_width=*/10);
   }
 
   // SuRF: 75% miss rate — 3 out of 4 queries are empty ranges
   // Realistic for time-series workloads querying recent windows
   void SuRFRangeScan75(ThreadState* thread) {
-    DoSuRFRangeScan(thread, /*miss_pct=*/75, /*range_width=*/10);
+    DoSuRFRangeScan(thread, "surfscan75", /*miss_pct=*/75,
+                    /*range_width=*/10);
   }
 
   // SuRF: 50% miss rate — half queries empty, half hit keys
   // Balanced workload showing intermediate SuRF benefit
   void SuRFRangeScan50(ThreadState* thread) {
-    DoSuRFRangeScan(thread, /*miss_pct=*/50, /*range_width=*/10);
+    DoSuRFRangeScan(thread, "surfscan50", /*miss_pct=*/50,
+                    /*range_width=*/10);
   }
 
   // SuRF: 25% miss rate — most queries find keys, few are empty
   // SuRF advantage should be small here since most ranges hit data
   void SuRFRangeScan25(ThreadState* thread) {
-    DoSuRFRangeScan(thread, /*miss_pct=*/25, /*range_width=*/10);
+    DoSuRFRangeScan(thread, "surfscan25", /*miss_pct=*/25,
+                    /*range_width=*/10);
   }
 
   // SuRF: 0% miss rate — all queries inside inserted key range
   // Worst case for SuRF: no SSTables can be skipped, SuRF overhead visible
   void SuRFRangeScan0(ThreadState* thread) {
-    DoSuRFRangeScan(thread, /*miss_pct=*/0, /*range_width=*/10);
+    DoSuRFRangeScan(thread, "surfscan0", /*miss_pct=*/0,
+                    /*range_width=*/10);
   }
 
   // SuRF: 100% miss rate with wide range (100 keys instead of 10)
   // Tests whether SuRF advantage holds on broader range queries
   void SuRFRangeScanWide(ThreadState* thread) {
-    DoSuRFRangeScan(thread, /*miss_pct=*/100, /*range_width=*/100);
+    DoSuRFRangeScan(thread, "surfscan_wide", /*miss_pct=*/100,
+                    /*range_width=*/100);
   }
 
   void DoDelete(ThreadState* thread, bool seq) {
