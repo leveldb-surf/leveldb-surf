@@ -1,0 +1,36 @@
+================================================================
+  SuRF vs Bloom Benchmark Summary
+  Date: Mon Apr 13 05:16:54 UTC 2026
+  Keys: 1000000 | Value size: 100 bytes
+================================================================
+
+--- Standard Benchmarks ---
+Bloom readrandom:  readrandom   :       2.847 micros/op; (632150 of 1000000 found)
+SuRF  readrandom:  readrandom   :       8.977 micros/op; (632150 of 1000000 found)
+Bloom readseq:     readseq      :       0.212 micros/op;  521.5 MB/s
+SuRF  readseq:     readseq      :       0.447 micros/op;  247.4 MB/s
+Bloom seekrandom:  seekrandom   :       8.891 micros/op; (632150 of 1000000 found)
+SuRF  seekrandom:  seekrandom   :       6.634 micros/op; (632150 of 1000000 found)
+
+--- Variable Miss Rate (range_width=10) ---
+Bloom surfscan100: surfscan100  :       1.298 micros/op; (0 keys scanned, miss=1000000 hit=0, width=10)
+SuRF  surfscan100: surfscan100  :       1.374 micros/op; (0 keys scanned, miss=1000000 hit=0, width=10)
+Bloom surfscan75: surfscan75   :       3.922 micros/op; (1736663 keys scanned, miss=750115 hit=249885, width=10)
+SuRF  surfscan75: surfscan75   :       5.005 micros/op; (1736663 keys scanned, miss=750115 hit=249885, width=10)
+Bloom surfscan50: surfscan50   :       5.213 micros/op; (3478645 keys scanned, miss=499614 hit=500386, width=10)
+SuRF  surfscan50: surfscan50   :       4.760 micros/op; (3478645 keys scanned, miss=499614 hit=500386, width=10)
+Bloom surfscan25: surfscan25   :       7.214 micros/op; (5215152 keys scanned, miss=249687 hit=750313, width=10)
+SuRF  surfscan25: surfscan25   :       5.817 micros/op; (5215152 keys scanned, miss=249687 hit=750313, width=10)
+Bloom surfscan0: surfscan0    :       7.503 micros/op; (6952830 keys scanned, miss=0 hit=1000000, width=10)
+SuRF  surfscan0: surfscan0    :       6.934 micros/op; (6952830 keys scanned, miss=0 hit=1000000, width=10)
+
+--- Wide Range Scan (range_width=100, 100% miss) ---
+Bloom surfscan_wide: surfscan_wide :       1.361 micros/op; (0 keys scanned, miss=1000000 hit=0, width=100)
+SuRF  surfscan_wide: surfscan_wide :       1.411 micros/op; (0 keys scanned, miss=1000000 hit=0, width=100)
+
+--- Write Performance ---
+Bloom fillrandom:  fillrandom   :       2.638 micros/op;   41.9 MB/s
+SuRF  fillrandom:  fillrandom   :       4.078 micros/op;   27.1 MB/s
+
+================================================================
+

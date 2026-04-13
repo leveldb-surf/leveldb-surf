@@ -1,0 +1,9 @@
+Keys:       16 bytes each
+Values:     100 bytes each (50 bytes after compression)
+Entries:    1000000
+RawSize:    110.6 MB (estimated)
+FileSize:   62.9 MB (estimated)
+Filter:     surf
+------------------------------------------------
+fillrandom   :       4.066 micros/op;   27.2 MB/s
+surfscan75   :       5.005 micros/op; (1736663 keys scanned, miss=750115 hit=249885, width=10)

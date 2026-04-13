@@ -1,0 +1,9 @@
+Keys:       16 bytes each
+Values:     100 bytes each (50 bytes after compression)
+Entries:    1000000
+RawSize:    110.6 MB (estimated)
+FileSize:   62.9 MB (estimated)
+Filter:     bloom
+------------------------------------------------
+fillrandom   :       2.767 micros/op;   40.0 MB/s
+surfscan100  :       1.298 micros/op; (0 keys scanned, miss=1000000 hit=0, width=10)

@@ -1,0 +1,4 @@
+Benchmark run: Mon Apr 13 05:14:25 UTC 2026
+Keys: 1000000
+Value size: 100 bytes
+

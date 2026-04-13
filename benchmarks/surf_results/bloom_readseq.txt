@@ -1,0 +1,9 @@
+Keys:       16 bytes each
+Values:     100 bytes each (50 bytes after compression)
+Entries:    1000000
+RawSize:    110.6 MB (estimated)
+FileSize:   62.9 MB (estimated)
+Filter:     bloom
+------------------------------------------------
+fillrandom   :       2.665 micros/op;   41.5 MB/s
+readseq      :       0.212 micros/op;  521.5 MB/s
