@@ -853,9 +853,21 @@ class Benchmark {
         }
       }
 
-      // Ensure SSTables exist for metrics when fillrandom is run
-      if (FLAGS_metrics_out && name == Slice("fillrandom")) {
-        db_->CompactRange(nullptr, nullptr);
+      // For metrics: compact before first read/scan benchmark to flush memtable to SSTables
+      // This ensures filters are tested on real SSTable data, not memtable-only reads
+      if (FLAGS_metrics_out && method != nullptr) {
+        static bool compacted_for_metrics = false;
+        if (!compacted_for_metrics &&
+            (name == Slice("readseq") || name == Slice("readreverse") ||
+             name == Slice("readrandom") || name == Slice("readmissing") ||
+             name == Slice("readhot") || name == Slice("seekrandom") ||
+             name == Slice("seekordered") || name == Slice("surfscan") ||
+             name == Slice("surfscan0") || name == Slice("surfscan25") ||
+             name == Slice("surfscan50") || name == Slice("surfscan75") ||
+             name == Slice("surfscan100") || name == Slice("surfscan_wide"))) {
+          db_->CompactRange(nullptr, nullptr);
+          compacted_for_metrics = true;
+        }
       }
 
       if (method != nullptr) {
