@@ -118,6 +118,9 @@ Early benchmarks were run before the `--filter` flag was added. Switching betwee
 - The overall µs/op values vary between runs due to system load, caching state, and compaction timing. The relative comparisons within a single run are what matter.
 - The early `surfscan` (-32% for SuRF) only tested 100% miss rate. The comprehensive variable miss rate tests reveal that SuRF's real advantage is on **mixed and hit-heavy workloads** (surfscan25: -19.4%), not pure misses (surfscan100: +5.9% for Bloom).
 
+**Why did surfscan flip from SuRF -32% to Bloom +5.9% at 100% miss?**
+At 100% miss rate, both filters finish in ~1.3 µs because the coarse `FileMetaData` check skips most SSTables before either filter is even consulted — neither filter is doing meaningful work. A difference of 0.08 µs (new run) vs 0.68 µs (old run) at this scale is dominated by system noise. The old Bloom result (2.102 µs) is suspiciously slow compared to the new Bloom result (1.298 µs), suggesting the old Bloom run had external overhead — cold LRU cache, incomplete compaction, or higher system load. The old runs were also separate compilations run at different times (manual code editing to switch filters), while the new runs use the `--filter` flag in the same binary run back-to-back under identical conditions. The -32% was an artifact of inconsistent test conditions, not a real SuRF advantage on pure misses. The real SuRF advantage appears at **25% miss rate (-19.4%)** and **seekrandom (-25.4%)** — workloads where actual data scanning happens and SuRF's trie structure provides value that Bloom's flat bit array cannot.
+
 ---
 
 ## Project Architecture
