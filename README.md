@@ -487,6 +487,20 @@ Our `RangeMayMatch` check runs after `FindTable()` loads the filter into memory.
 
 Other future directions include: per-SSTable adaptive filter selection (choose Bloom or SuRF based on observed access patterns for each SSTable), SuRF-Hash and SuRF-Real variants from the original paper (which trade false positive rate for space), and integration with LevelDB's compaction statistics to automatically identify SSTables that would benefit most from range filtering.
 
+### Scalability — Variable Database Size (surfscan25, range_width=10)
+
+| Keys   | DB Size | Bloom (µs/op) | SuRF (µs/op) | Change     | Notes                        |
+|--------|---------|---------------|--------------|------------|------------------------------|
+| 100K   | 11 MB   | 9.051         | 8.110        | **-10.4%** | SuRF wins, small working set |
+| 500K   | 55 MB   | 9.145         | 10.795       | +18.0%     | Bloom wins, cache thrashing  |
+| 1M     | 110 MB  | 7.214         | 5.817        | **-19.4%** | SuRF wins, sweet spot        |
+| 10M    | 1.1 GB  | 13.761        | OOM killed   | —          | SuRF exhausts memory         |
+
+**Why SuRF runs out of memory at 10M keys:**
+The `thread_local` deserialization cache holds one `surf::SuRF*` object per thread. At 10M keys, each SSTable's serialized trie is much larger. As surfscan25 queries across many SSTables, the cache is invalidated frequently — each invalidation destroys the old trie and deserializes a new one. The repeated allocation and deallocation of large trie objects, combined with the larger working set, overwhelms available container memory.
+
+**This is a known limitation of SuRF-Base.** The original SIGMOD 2018 paper tested SuRF inside RocksDB, which has a more sophisticated memory management system (partitioned filters, block-based filter caching). Integrating similar memory management into LevelDB — pooling deserialized tries in the LRU cache alongside data blocks rather than using `thread_local` — would be the fix. This is a natural future extension.
+
 ---
 
 ## Key Concepts Glossary
