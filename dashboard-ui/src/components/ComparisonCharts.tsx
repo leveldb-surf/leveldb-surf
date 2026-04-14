@@ -24,7 +24,7 @@ export function ComparisonCharts({ summary, events, mode }: ComparisonChartsProp
 
   const isCompare = mode === 'compare';
   const compareSummary = summary as CompareSummary;
-  const singleSummary = summary as Summary;
+  const singleSummary = 'overall' in summary ? compareSummary.overall! : (summary as Summary);
 
   const latencyByIndex = events.map((e, i) => ({
     index: i,
@@ -41,25 +41,25 @@ export function ComparisonCharts({ summary, events, mode }: ComparisonChartsProp
 
   const latencyByFilterType = isCompare ? [
     { filter_type: 'bloom', bloom: bloomSummary?.avg_latency_us ?? 0, surf: surfSummary?.avg_latency_us ?? 0 },
-  ] : Object.entries(singleSummary.avg_latency_by_filter_type).map(([ft, lat]) => ({
+  ] : Object.entries(singleSummary.avg_latency_by_filter_type || {}).map(([ft, lat]) => ({
     filter_type: ft,
     latency: lat,
   }));
 
   const eventsByQueryType = isCompare ? [
-    { query_type: 'point_get', bloom: bloomSummary?.count_by_query_type['point_get'] || 0, surf: surfSummary?.count_by_query_type['point_get'] || 0 },
-    { query_type: 'range_scan', bloom: bloomSummary?.count_by_query_type['range_scan'] || 0, surf: surfSummary?.count_by_query_type['range_scan'] || 0 },
-  ] : Object.entries(singleSummary.count_by_query_type).map(([qt, count]) => ({
+    { query_type: 'point_get', bloom: bloomSummary?.count_by_query_type?.['point_get'] || 0, surf: surfSummary?.count_by_query_type?.['point_get'] || 0 },
+    { query_type: 'range_scan', bloom: bloomSummary?.count_by_query_type?.['range_scan'] || 0, surf: surfSummary?.count_by_query_type?.['range_scan'] || 0 },
+  ] : Object.entries(singleSummary.count_by_query_type || {}).map(([qt, count]) => ({
     query_type: qt,
     count,
   }));
 
   const eventsByBenchmark = isCompare ? [
-    { benchmark_name: 'fillrandom', bloom: bloomSummary?.count_by_benchmark_name['fillrandom'] || 0, surf: surfSummary?.count_by_benchmark_name['fillrandom'] || 0 },
-    { benchmark_name: 'readrandom', bloom: bloomSummary?.count_by_benchmark_name['readrandom'] || 0, surf: surfSummary?.count_by_benchmark_name['readrandom'] || 0 },
-    { benchmark_name: 'readseq', bloom: bloomSummary?.count_by_benchmark_name['readseq'] || 0, surf: surfSummary?.count_by_benchmark_name['readseq'] || 0 },
-    { benchmark_name: 'seekrandom', bloom: bloomSummary?.count_by_benchmark_name['seekrandom'] || 0, surf: surfSummary?.count_by_benchmark_name['seekrandom'] || 0 },
-  ] : Object.entries(singleSummary.count_by_benchmark_name).map(([bn, count]) => ({
+    { benchmark_name: 'fillrandom', bloom: bloomSummary?.count_by_benchmark_name?.['fillrandom'] || 0, surf: surfSummary?.count_by_benchmark_name?.['fillrandom'] || 0 },
+    { benchmark_name: 'readrandom', bloom: bloomSummary?.count_by_benchmark_name?.['readrandom'] || 0, surf: surfSummary?.count_by_benchmark_name?.['readrandom'] || 0 },
+    { benchmark_name: 'readseq', bloom: bloomSummary?.count_by_benchmark_name?.['readseq'] || 0, surf: surfSummary?.count_by_benchmark_name?.['readseq'] || 0 },
+    { benchmark_name: 'seekrandom', bloom: bloomSummary?.count_by_benchmark_name?.['seekrandom'] || 0, surf: surfSummary?.count_by_benchmark_name?.['seekrandom'] || 0 },
+  ] : Object.entries(singleSummary.count_by_benchmark_name || {}).map(([bn, count]) => ({
     benchmark_name: bn,
     count,
   }));

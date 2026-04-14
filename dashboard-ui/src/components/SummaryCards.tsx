@@ -13,9 +13,9 @@ export function SummaryCards({ summary, mode }: SummaryCardsProps) {
 
   const isCompare = mode === 'compare';
   const compareSummary = summary as CompareSummary;
-  const singleSummary = summary as Summary;
+  const singleSummary = 'overall' in summary ? compareSummary.overall : (summary as Summary);
 
-  const displaySummary = isCompare ? compareSummary.overall : singleSummary;
+  const displaySummary = isCompare ? compareSummary.overall ?? singleSummary : singleSummary;
   const bloomLoaded = Boolean(compareSummary.bloom);
   const surfLoaded = Boolean(compareSummary.surf);
 
@@ -24,7 +24,7 @@ export function SummaryCards({ summary, mode }: SummaryCardsProps) {
       <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
         <Card
           title="Total Events"
-          value={displaySummary.total_events.toLocaleString()}
+          value={displaySummary.total_events != null ? displaySummary.total_events.toLocaleString() : '0'}
           icon={<Activity className="w-5 h-5 text-blue-600" />}
         />
         <Card
