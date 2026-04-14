@@ -7,11 +7,15 @@ const { computeSummary } = require('./summary-calculator');
 function getEventsForSource(state, source) {
   if (source === 'all') {
     const allEvents = [];
-    for (const src of Object.values(state.sources)) {
-      allEvents.push(...src.events);
+    for (const sourceKey of Object.keys(state.sources)) {
+      const src = state.sources[sourceKey];
+      if (src && Array.isArray(src.events)) {
+        allEvents.push(...src.events);
+      }
     }
+
     // Sort by timestamp_us ascending, fall back to query_id if needed
-    return allEvents.sort((a, b) => {
+    return allEvents.slice().sort((a, b) => {
       const aTime = typeof a.timestamp_us === 'number' ? a.timestamp_us : Number.POSITIVE_INFINITY;
       const bTime = typeof b.timestamp_us === 'number' ? b.timestamp_us : Number.POSITIVE_INFINITY;
       if (aTime !== bTime) {
@@ -21,9 +25,12 @@ function getEventsForSource(state, source) {
       const bId = typeof b.query_id === 'number' ? b.query_id : 0;
       return aId - bId;
     });
-  } else if (state.sources[source]) {
+  }
+
+  if (state.sources[source] && Array.isArray(state.sources[source].events)) {
     return state.sources[source].events;
   }
+
   return [];
 }
 
