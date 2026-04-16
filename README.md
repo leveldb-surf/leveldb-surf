@@ -511,6 +511,8 @@ GitHub disabled password authentication in August 2021. SSH keys (`ed25519`) are
 
 **Test validation:** `./leveldb_tests` runs during image build. Result: 210 pass, 1 skipped (zstd — expected, not installed).
 
+**Note:** If Docker build fails on your machine, see the **troubleshooting** section below.
+
 ---
 
 ## Daily Workflow
@@ -719,3 +721,36 @@ npm run dev
 ```
 
 Recompilation is only required if C++ source code changes.
+
+## Troubleshooting
+
+### Docker Build Issue (APT Mirror)
+
+**Problem:** Some users encountered Docker build failures at apt-get update with errors like:
+
+- Failed to fetch ... Mirror sync in progress
+- Package ... has no installation candidate
+- Certificate/network errors
+
+**Cause:** The default Ubuntu mirror (archive.ubuntu.com) can be unreliable depending on network/VPN or mirror sync state. This issue is environment-dependent (not all users see it).
+
+**Fix:** Switch to Ubuntu’s mirror list to dynamically select a working mirror.
+
+**Replace:** RUN apt-get update && apt-get install -y ...  
+
+**With:**   
+
+RUN set -eux; \   
+    printf '%s\n' \   
+      'deb mirror://mirrors.ubuntu.com/mirrors.txt jammy main restricted universe multiverse' \   
+      'deb mirror://mirrors.ubuntu.com/mirrors.txt jammy-updates main restricted universe multiverse' \   
+      'deb mirror://mirrors.ubuntu.com/mirrors.txt jammy-backports main restricted universe multiverse' \   
+      'deb mirror://mirrors.ubuntu.com/mirrors.txt jammy-security main restricted universe multiverse' \   
+      > /etc/apt/sources.list; \   
+    rm -rf /var/lib/apt/lists/*; \   
+    apt-get update -o Acquire::Retries=10 -o Acquire::http::No-Cache=true; \   
+    apt-get install -y --no-install-recommends \   
+      build-essential cmake git libsnappy-dev python3 python3-pip vim nano gdb valgrind; \   
+    rm -rf /var/lib/apt/lists/*  
+
+**Note:** This fix ensures stable builds across different environments. Some users may not encounter this issue at all.
