@@ -13,6 +13,7 @@ This section guides you through generating benchmark metrics, starting the backe
 **Start the container and generate metrics:**
 ```bash
 cd "path-to-repo"
+docker compose up -d
 docker run -it --rm -v "${PWD}\project:/workspace/project" -v "${PWD}\benchmarks:/workspace/benchmarks" -v "${PWD}\metrics:/workspace/metrics" leveldb-surf
 
 # Inside container: Generate Bloom baseline
